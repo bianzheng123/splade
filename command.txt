@@ -1,0 +1,28 @@
+to run the code, you should upgrade the package hydra-core
+
+python3 -m splade.all \
+  config.checkpoint_dir=experiments/debug/checkpoint \
+  config.index_dir=experiments/debug/index \
+  config.out_dir=experiments/debug/out
+
+
+put three thing into the following folder:
+msmacro/dev_queries/raw.tsv, where put the query text
+msmacro/full_collection/raw.tsv, where put the document text
+msmacro/dev_qrel.json, where put the groundtruth
+
+conda activate splade_env
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+export SPLADE_CONFIG_NAME="config_splade++_cocondenser_ensembledistil"
+python3 -m splade.index \
+  init_dict.model_type_or_dir=naver/splade-cocondenser-ensembledistil \
+  config.pretrained_no_yamlconfig=true \
+  config.index_dir=experiments/pre-trained/index \
+  config.data.COLLECTION_PATH=
+python3 -m splade.retrieve \
+  init_dict.model_type_or_dir=naver/splade-cocondenser-ensembledistil \
+  config.pretrained_no_yamlconfig=true \
+  config.index_dir=experiments/pre-trained/index \
+  config.out_dir=experiments/pre-trained/out \
+  retrieve_evaluate=msmarco
+# pretrained_no_yamlconfig indicates that we solely rely on a HF-valid model path
