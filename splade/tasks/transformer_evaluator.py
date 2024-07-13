@@ -19,7 +19,7 @@ class SparseIndexing(Evaluator):
     """sparse indexing
     """
 
-    def __init__(self, model, config, compute_stats=False, dim_voc=None, is_query=False, force_new=True,**kwargs):
+    def __init__(self, model, config, compute_stats=False, dim_voc=None, is_query=False, force_new=True, **kwargs):
         super().__init__(model, config, **kwargs)
         self.index_dir = config["index_dir"] if config is not None else None
         self.sparse_index = IndexDictOfArray(self.index_dir, dim_voc=dim_voc, force_new=force_new)
@@ -149,6 +149,7 @@ class SparseRetrieval(Evaluator):
             stats = defaultdict(float)
         with torch.no_grad():
             for t, batch in enumerate(tqdm(q_loader)):
+                # get the query id, only one query per batch
                 q_id = to_list(batch["id"])[0]
                 if id_dict:
                     q_id = id_dict[q_id]
@@ -159,8 +160,28 @@ class SparseRetrieval(Evaluator):
                 if self.compute_stats:
                     stats["L0_q"] += self.l0(query).item()
                 # TODO: batched version for retrieval
+                # row, col means the position of the non-zero values in the query
+                # since there is only one query, so row is useless
                 row, col = torch.nonzero(query, as_tuple=True)
+                # get the value of each non-zero position
                 values = query[to_list(row), to_list(col)]
+                # if t == len(q_loader) - 1:
+                #     print(f"row {row} len {len(row)}, col {col} len {len(col)}")
+                #     print(f"values {values} len {len(values)}")
+                #     print(f'self.numba_index_doc_ids len {[len(arr) for arr in self.numba_index_doc_ids.values()]}')
+                #     # print(f'self.numba_index_doc_ids len {self.numba_index_doc_ids}')
+                #     print(
+                #         f'self.numba_index_doc_values len {[len(arr) for arr in self.numba_index_doc_values.values()]}')
+                #     # print(f'self.numba_index_doc_values {self.numba_index_doc_values}')
+                #     doc_idx_len_l = [len(arr) for arr in self.numba_index_doc_ids.values()]
+                #     doc_value_len_l = [len(arr) for arr in self.numba_index_doc_values.values()]
+                #     for idx_len, value_len in zip(doc_idx_len_l, doc_value_len_l):
+                #         assert idx_len == value_len
+                #     print(f"size_collection {self.sparse_index.nb_docs()}")
+
+                # numba_index_doc_ids and numba_index_doc_values are an inverted file
+                # the key is the i-th dimension, the value stores the document ID of non-zero value (numba_index_doc_ids) and its value (numba_index_doc_values)
+                # self.sparse_index.nb_docs() means the number of document
                 filtered_indexes, scores = self.numba_score_float(self.numba_index_doc_ids,
                                                                   self.numba_index_doc_values,
                                                                   col.cpu().numpy(),
@@ -266,14 +287,13 @@ class SparseApproxEvalWrapper(Evaluator):
         return retriever.retrieve(self.q_loader, top_k=self.config["top_k"], name=i, return_d=True)
 
 
-
 class RerankEvaluator(Evaluator):
 
     def __init__(self, model, config, dataset_name=None, **kwargs):
         super().__init__(model, config, **kwargs)
-        self.init_(config=config,dataset_name=dataset_name)
+        self.init_(config=config, dataset_name=dataset_name)
 
-    def init_(self, config,dataset_name):
+    def init_(self, config, dataset_name):
         self.out_dir = os.path.join(config["out_dir"], dataset_name) if dataset_name is not None else config["out_dir"]
 
     def evaluate(self, data_loader, out_dir, reranker_type, model_name="unicamp-dl/mt5-13b-mmarco-100k"):
@@ -287,9 +307,9 @@ class RerankEvaluator(Evaluator):
                 if reranker_type == "duoT5":
                     model = DuoT5(model=self.model)
                 else:
-                    model = MonoT5(model=self.model,use_amp=False,pretrained_model_name_or_path=model_name)
-#                    model = MonoT5(model=self.model,use_amp=False,pretrained_model_name_or_path="unicamp-dl/mt5-13b-mmarco-100k")
-#                    model = MonoT5(model=self.model,use_amp=False,pretrained_model_name_or_path="castorini/monot5-3b-msmarco-10k")
+                    model = MonoT5(model=self.model, use_amp=False, pretrained_model_name_or_path=model_name)
+                #                    model = MonoT5(model=self.model,use_amp=False,pretrained_model_name_or_path="unicamp-dl/mt5-13b-mmarco-100k")
+                #                    model = MonoT5(model=self.model,use_amp=False,pretrained_model_name_or_path="castorini/monot5-3b-msmarco-10k")
 
                 for query_id, all_list in tqdm(data_loader):
                     query = all_list[0]
@@ -302,18 +322,20 @@ class RerankEvaluator(Evaluator):
                     for k, v in batch.items():
                         if k not in ["q_id", "d_id"]:
                             batch[k] = v.to(self.device)
-                    logits = self.model(**{k: v for k, v in batch.items() if k not in {"q_id", "d_id","labels_attention"}})
+                    logits = self.model(
+                        **{k: v for k, v in batch.items() if k not in {"q_id", "d_id", "labels_attention"}})
                     logits = logits[0][:, 0]
 
                     for q_id, d_id, s in zip(batch["q_id"],
-                                            batch["d_id"],
-                                            to_list(logits),
-                                            ):
+                                             batch["d_id"],
+                                             to_list(logits),
+                                             ):
                         temp_d[str(q_id)][str(d_id)] = s
         with open(os.path.join(self.out_dir, "run.json"), "w") as handler:
             json.dump(temp_d, handler)
         logs.write("done\ntook about {} hours".format((time.time() - t0) / 3600))
         return temp_d
+
 
 class PairwisePromptEvaluator(Evaluator):
 
@@ -321,7 +343,7 @@ class PairwisePromptEvaluator(Evaluator):
         super().__init__(model, config, **kwargs)
         self.init_(config=config, position_dict=position_dict, dataset_name=dataset_name)
 
-    def init_(self, config,dataset_name,position_dict):
+    def init_(self, config, dataset_name, position_dict):
         self.out_dir = os.path.join(config["out_dir"], dataset_name) if dataset_name is not None else config["out_dir"]
         self.position_dict = position_dict
 
@@ -336,7 +358,7 @@ class PairwisePromptEvaluator(Evaluator):
                         scores[qid][did] += 1
                     elif value == results[qid][did2][did]:
                         scores[qid][did] += 0.5
-                scores[qid][did] += 0.001/position_dict[qid][did] # for solving ties
+                scores[qid][did] += 0.001 / position_dict[qid][did]  # for solving ties
         return scores
 
     def evaluate(self, data_loader, out_dir, reranker_type="PairwisePrompt"):
@@ -348,28 +370,26 @@ class PairwisePromptEvaluator(Evaluator):
                 for k, v in batch.items():
                     if k not in ["q_id", "d_id_1", "d_id_2"]:
                         batch[k] = v.to(self.device)
-                outputs = self.model.generate(batch["input_ids"],max_new_tokens=1,output_scores=True,return_dict_in_generate=True).scores[0]
-                result = outputs[:,[71,272]] # 71 is A, 272 is B, hardcoded for FlanT5
-                all_scores = torch.nn.functional.softmax(result,dim=-1)
+                outputs = self.model.generate(batch["input_ids"], max_new_tokens=1, output_scores=True,
+                                              return_dict_in_generate=True).scores[0]
+                result = outputs[:, [71, 272]]  # 71 is A, 272 is B, hardcoded for FlanT5
+                all_scores = torch.nn.functional.softmax(result, dim=-1)
 
                 for qid, did1, did2, score in zip(batch["q_id"],
-                                        batch["d_id_1"], batch["d_id_2"],
-                                        to_list(all_scores)):
+                                                  batch["d_id_1"], batch["d_id_2"],
+                                                  to_list(all_scores)):
                     if did1 not in results[qid]:
                         results[qid][did1] = defaultdict(float)
                     if did2 not in results[qid]:
                         results[qid][did2] = defaultdict(float)
-                    
+
                     if score[0] > score[1]:
                         results[qid][did1][did2] = 1
                     else:
-                        results[qid][did1][did2] = -1    
-                    
-                    
-                    
+                        results[qid][did1][did2] = -1
+
         temp_d = PairwisePromptEvaluator.compute_score(results, self.position_dict)
         with open(os.path.join(self.out_dir, "run.json"), "w") as handler:
             json.dump(temp_d, handler)
         print("done\ntook about {} hours".format((time.time() - t0) / 3600))
         return temp_d
-

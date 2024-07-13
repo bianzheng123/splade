@@ -1,0 +1,18 @@
+after install in README.md, please upgrade hydra-core and the huggingface using the command
+
+pip install --upgrade transformers
+pip install hydra-core --upgrade
+
+
+proxychains python3 -m splade.index \
+  init_dict.model_type_or_dir=naver/splade-v3-doc \
+  config.pretrained_no_yamlconfig=true \
+  config.index_dir=experiments/pre-trained/index
+
+proxychains python3 -m splade.retrieve \
+  init_dict.model_type_or_dir=naver/splade-v3-doc \
+  config.pretrained_no_yamlconfig=true \
+  config.index_dir=experiments/pre-trained/index \
+  config.out_dir=experiments/pre-trained/out \
+  config.top_k=10
+

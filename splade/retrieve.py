@@ -1,5 +1,5 @@
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import os
 
 from conf.CONFIG_CHOICE import CONFIG_NAME, CONFIG_PATH
@@ -26,7 +26,10 @@ def retrieve_evaluate(exp_dict: DictConfig):
     batch_size = 1
     # NOTE: batch_size is set to 1, currently no batched implem for retrieval (TODO)
     for data_dir in set(exp_dict["data"]["Q_COLLECTION_PATH"]):
+        # q_collection is the text of the query
         q_collection = CollectionDatasetPreLoad(data_dir=data_dir, id_style="row_id")
+        # tokenize the collection, the q_loader is a dictionary
+        # input_ids is the tokenized text, attention_mask is the mask for the input_ids, id is the ID of the query
         q_loader = CollectionDataLoader(dataset=q_collection, tokenizer_type=model_training_config["tokenizer_type"],
                                         max_length=model_training_config["max_length"], batch_size=batch_size,
                                         shuffle=False, num_workers=1)
