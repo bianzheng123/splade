@@ -147,6 +147,7 @@ class SparseRetrieval(Evaluator):
         res = defaultdict(dict)
         if self.compute_stats:
             stats = defaultdict(float)
+
         with torch.no_grad():
             for t, batch in enumerate(tqdm(q_loader)):
                 # get the query id, only one query per batch

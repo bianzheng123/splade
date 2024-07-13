@@ -16,3 +16,26 @@ proxychains python3 -m splade.retrieve \
   config.out_dir=experiments/pre-trained/out \
   config.top_k=10
 
+for just inference the model, you should add the configure file in conf/index/{dataset}.yaml and conf/retrieve_evaluate/{dataset}.yaml,
+the format should be similar as toy.yaml
+
+The format of the dataset of toy is
+    toy_data/dev_queries/raw.tsv: stores the query information, queryID and query text
+    toy_data/full_collection/raw.tsv: stores the document information, docID and doc text
+    toy_dta/qrel/qrel.json: stores a map, key is the queryID, value is a map, key is the docID, value is the relevance score
+
+
+proxychains python3 -m splade.index \
+  init_dict.model_type_or_dir=naver/splade-v3-doc \
+  config.pretrained_no_yamlconfig=true \
+  index=lotte-500-gnd \
+  config.index_dir=experiments/pre-trained/lotte-500-gnd/index
+
+proxychains python3 -m splade.retrieve \
+  init_dict.model_type_or_dir=naver/splade-v3-doc \
+  config.pretrained_no_yamlconfig=true \
+  retrieve_evaluate=lotte-500-gnd \
+  config.index_dir=experiments/pre-trained/lotte-500-gnd/index \
+  config.out_dir=experiments/pre-trained/lotte-500-gnd/out \
+  config.top_k=10
+

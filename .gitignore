@@ -7,3 +7,6 @@ ckpt/
 output/
 /experiments
 /outputs
+/data
+!/data/lotte-500-gnd
+!/data/toy_data
