@@ -26,16 +26,33 @@ The format of the dataset of toy is
 
 
 proxychains python3 -m splade.index \
-  init_dict.model_type_or_dir=naver/splade-v3-doc \
+  init_dict.model_type_or_dir=naver/splade_v2_max \
   config.pretrained_no_yamlconfig=true \
   index=lotte-500-gnd \
   config.index_dir=experiments/pre-trained/lotte-500-gnd/index
 
 proxychains python3 -m splade.retrieve \
-  init_dict.model_type_or_dir=naver/splade-v3-doc \
+  init_dict.model_type_or_dir=naver/splade_v2_max \
   config.pretrained_no_yamlconfig=true \
   retrieve_evaluate=lotte-500-gnd \
   config.index_dir=experiments/pre-trained/lotte-500-gnd/index \
   config.out_dir=experiments/pre-trained/lotte-500-gnd/out \
   config.top_k=10
+
+
+
+proxychains python3 -m splade.self_index \
+  init_dict.model_type_or_dir=naver/splade_v2_max \
+  config.pretrained_no_yamlconfig=true \
+  index=lotte-500-gnd \
+  config.index_dir=experiments/pre-trained/lotte-500-gnd/index
+
+proxychains python3 -m splade.self_retrieve \
+  init_dict.model_type_or_dir=naver/splade_v2_max \
+  config.pretrained_no_yamlconfig=true \
+  retrieve_evaluate=lotte-500-gnd \
+  config.index_dir=experiments/pre-trained/lotte-500-gnd/index \
+  config.out_dir=experiments/pre-trained/lotte-500-gnd/out \
+  config.top_k=10
+
 

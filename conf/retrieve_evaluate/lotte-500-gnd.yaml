@@ -6,7 +6,7 @@ data:
 
 config:
   top_k: 10
-  threshold: 0.4
-  eval_metric: [[mrr_10, recall]]
+  threshold: 0
+  eval_metric: [[mrr_10, recall, ndcg]]
   retrieval_name: [other_dataset]
 

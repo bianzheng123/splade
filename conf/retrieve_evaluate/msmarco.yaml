@@ -2,10 +2,10 @@
 
 data:
   Q_COLLECTION_PATH: [data/msmarco/dev_queries]
-  EVAL_QREL_PATH: [data/msmarco/dev_qrel.json]
+  EVAL_QREL_PATH: [data/msmarco/qrel/qrel.json]
 
 config:
-  top_k: 1000
+  top_k: 10
   threshold: 0
   eval_metric: [[mrr_10, recall]]
   retrieval_name: [MSMARCO]

@@ -8,7 +8,6 @@ import numba
 import numpy as np
 import torch
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer
 
 from ..indexing.inverted_index import IndexDictOfArray
 from ..losses.regularization import L0
@@ -16,24 +15,66 @@ from ..tasks.base.evaluator import Evaluator
 from ..utils.utils import makedir, to_list
 
 
-class SelfTokenizer():
-    def __init__(self, tokenizer_type, max_length):
-        self.max_length = max_length
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_type)
+class SelfSparseIndexing(Evaluator):
+    """sparse indexing
+    """
 
-    def tokenize(self, batch):
-        """
-        batch is a list of tuples, each tuple has 2 (text) items (id_, doc)
-        """
-        id_, d = zip(*batch)
-        processed_passage = self.tokenizer(list(d),
-                                           add_special_tokens=True,
-                                           padding="longest",  # pad to max sequence length in batch
-                                           truncation="longest_first",  # truncates to self.max_length
-                                           max_length=self.max_length,
-                                           return_attention_mask=True)
-        return {**{k: torch.tensor(v) for k, v in processed_passage.items()},
-                "id": torch.tensor([int(i) for i in id_], dtype=torch.long)}
+    def __init__(self, model, config, compute_stats=False, dim_voc=None, is_query=False, force_new=True, **kwargs):
+        super().__init__(model, config, **kwargs)
+        self.index_dir = config["index_dir"] if config is not None else None
+        self.sparse_index = IndexDictOfArray(self.index_dir, dim_voc=dim_voc, force_new=force_new)
+        self.compute_stats = compute_stats
+        self.is_query = is_query
+        if self.compute_stats:
+            self.l0 = L0()
+
+    def index(self, collection_loader, id_dict=None):
+        # require: save the index
+        doc_ids = []
+        if self.compute_stats:
+            stats = defaultdict(float)
+        count = 0
+        with torch.no_grad():
+            for t, batch in enumerate(tqdm(collection_loader)):
+                inputs = {k: v.to(self.device) for k, v in batch.items() if k not in {"id"}}
+                if self.is_query:
+                    batch_documents = self.model(q_kwargs=inputs)["q_rep"]
+                else:
+                    batch_documents = self.model(d_kwargs=inputs)["d_rep"]
+                if self.compute_stats:
+                    stats["L0_d"] += self.l0(batch_documents).item()
+                row, col = torch.nonzero(batch_documents, as_tuple=True)
+                data = batch_documents[row, col]
+                row = row + count
+                batch_ids = to_list(batch["id"])
+                if id_dict:
+                    batch_ids = [id_dict[x] for x in batch_ids]
+                count += len(batch_ids)
+                doc_ids.extend(batch_ids)
+                self.sparse_index.add_batch_document(row.cpu().numpy(), col.cpu().numpy(), data.cpu().numpy(),
+                                                     n_docs=len(batch_ids))
+        if self.compute_stats:
+            stats = {key: value / len(collection_loader) for key, value in stats.items()}
+        if self.index_dir is not None:
+            self.sparse_index.save()
+            pickle.dump(doc_ids, open(os.path.join(self.index_dir, "doc_ids.pkl"), "wb"))
+            print("done iterating over the corpus...")
+            print("index contains {} posting lists".format(len(self.sparse_index)))
+            print("index contains {} documents".format(len(doc_ids)))
+            if self.compute_stats:
+                with open(os.path.join(self.index_dir, "index_stats.json"), "w") as handler:
+                    json.dump(stats, handler)
+        else:
+            # if no index_dir, we do not write the index to disk but return it
+            for key in list(self.sparse_index.index_doc_id.keys()):
+                # convert to numpy
+                self.sparse_index.index_doc_id[key] = np.array(self.sparse_index.index_doc_id[key], dtype=np.int32)
+                self.sparse_index.index_doc_value[key] = np.array(self.sparse_index.index_doc_value[key],
+                                                                  dtype=np.float32)
+            out = {"index": self.sparse_index, "ids_mapping": doc_ids}
+            if self.compute_stats:
+                out["stats"] = stats
+            return out
 
 
 class SelfSparseRetrieval(Evaluator):
@@ -70,11 +111,9 @@ class SelfSparseRetrieval(Evaluator):
         # unused documents => this should be tuned, currently it is set to 0
         return filtered_indexes, -scores[filtered_indexes]
 
-    def __init__(self, model, config, tokenizer: SelfTokenizer, dim_voc, dataset_name=None, index_d=None,
-                 compute_stats=False, is_beir=False,
+    def __init__(self, model, config, dim_voc, dataset_name=None, index_d=None, compute_stats=False, is_beir=False,
                  **kwargs):
         super().__init__(model, config, **kwargs)
-        self.tokenizer = tokenizer
         assert ("index_dir" in config and index_d is None) or (
                 "index_dir" not in config and index_d is not None)
         if "index_dir" in config:
@@ -102,7 +141,7 @@ class SelfSparseRetrieval(Evaluator):
         if self.compute_stats:
             self.l0 = L0()
 
-    def retrieve(self, q_collection, top_k, name=None, return_d=False, id_dict=False, threshold=0):
+    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0):
         makedir(self.out_dir)
         if self.compute_stats:
             makedir(os.path.join(self.out_dir, "stats"))
@@ -110,18 +149,10 @@ class SelfSparseRetrieval(Evaluator):
         if self.compute_stats:
             stats = defaultdict(float)
 
-        # unit of time is second
-        retrieval_time_l = []
-        encode_time_l = []
-        search_time_l = []
-
         with torch.no_grad():
-            n_query = len(q_collection)
-
-            # for warm-up
-            for local_qID in tqdm(range(2)):
+            for t, batch in enumerate(tqdm(q_loader)):
+                # print("batch", batch)
                 # get the query id, only one query per batch
-                batch = self.tokenizer.tokenize([q_collection[local_qID]])
                 q_id = to_list(batch["id"])[0]
                 if id_dict:
                     q_id = id_dict[q_id]
@@ -131,48 +162,26 @@ class SelfSparseRetrieval(Evaluator):
                 query = self.model(q_kwargs=inputs)["q_rep"]  # we assume ONE query per batch here
                 if self.compute_stats:
                     stats["L0_q"] += self.l0(query).item()
-
                 # TODO: batched version for retrieval
                 # row, col means the position of the non-zero values in the query
                 # since there is only one query, so row is useless
                 row, col = torch.nonzero(query, as_tuple=True)
+                print("-------------------row, col", row, col)
                 # get the value of each non-zero position
                 values = query[to_list(row), to_list(col)]
-
-                # numba_index_doc_ids and numba_index_doc_values are an inverted file
-                # the key is the i-th dimension, the value stores the document ID of non-zero value (numba_index_doc_ids) and its value (numba_index_doc_values)
-                # self.sparse_index.nb_docs() means the number of document
-                filtered_indexes, scores = self.numba_score_float(self.numba_index_doc_ids,
-                                                                  self.numba_index_doc_values,
-                                                                  col.cpu().numpy(),
-                                                                  values.cpu().numpy().astype(np.float32),
-                                                                  threshold=threshold,
-                                                                  size_collection=self.sparse_index.nb_docs())
-                # threshold set to 0 by default, could be better
-                filtered_indexes, scores = self.select_topk(filtered_indexes, scores, k=top_k)
-
-            for local_qID in tqdm(range(n_query)):
-                # get the query id, only one query per batch
-                start = time.time_ns()
-                batch = self.tokenizer.tokenize([q_collection[local_qID]])
-                q_id = to_list(batch["id"])[0]
-                if id_dict:
-                    q_id = id_dict[q_id]
-                inputs = {k: v for k, v in batch.items() if k not in {"id"}}
-                for k, v in inputs.items():
-                    inputs[k] = v.to(self.device)
-                query = self.model(q_kwargs=inputs)["q_rep"]  # we assume ONE query per batch here
-                if self.compute_stats:
-                    stats["L0_q"] += self.l0(query).item()
-                encode_time = (time.time_ns() - start) * 1e-6
-
-                start_search = time.time_ns()
-                # TODO: batched version for retrieval
-                # row, col means the position of the non-zero values in the query
-                # since there is only one query, so row is useless
-                row, col = torch.nonzero(query, as_tuple=True)
-                # get the value of each non-zero position
-                values = query[to_list(row), to_list(col)]
+                # if t == len(q_loader) - 1:
+                #     print(f"row {row} len {len(row)}, col {col} len {len(col)}")
+                #     print(f"values {values} len {len(values)}")
+                #     print(f'self.numba_index_doc_ids len {[len(arr) for arr in self.numba_index_doc_ids.values()]}')
+                #     # print(f'self.numba_index_doc_ids len {self.numba_index_doc_ids}')
+                #     print(
+                #         f'self.numba_index_doc_values len {[len(arr) for arr in self.numba_index_doc_values.values()]}')
+                #     # print(f'self.numba_index_doc_values {self.numba_index_doc_values}')
+                #     doc_idx_len_l = [len(arr) for arr in self.numba_index_doc_ids.values()]
+                #     doc_value_len_l = [len(arr) for arr in self.numba_index_doc_values.values()]
+                #     for idx_len, value_len in zip(doc_idx_len_l, doc_value_len_l):
+                #         assert idx_len == value_len
+                #     print(f"size_collection {self.sparse_index.nb_docs()}")
 
                 # numba_index_doc_ids and numba_index_doc_values are an inverted file
                 # the key is the i-th dimension, the value stores the document ID of non-zero value (numba_index_doc_ids) and its value (numba_index_doc_values)
@@ -187,21 +196,8 @@ class SelfSparseRetrieval(Evaluator):
                 filtered_indexes, scores = self.select_topk(filtered_indexes, scores, k=top_k)
                 for id_, sc in zip(filtered_indexes, scores):
                     res[str(q_id)][str(self.doc_ids[id_])] = float(sc)
-                search_time = (time.time_ns() - start_search) * 1e-6
-                retrieval_time = (time.time_ns() - start) * 1e-6
-                retrieval_time_l.append(retrieval_time)
-                encode_time_l.append(encode_time)
-                search_time_l.append(search_time)
-
         if self.compute_stats:
-            stats = {key: value / len(q_collection) for key, value in stats.items()}
-
-        time_stat = {"retrieval_time(ms)": retrieval_time_l, 'encode_time(ms)': encode_time_l,
-                     'search_time(ms)': search_time_l}
-        with open(os.path.join(self.out_dir, "time_stats.json"),
-                  "w") as handler:
-            json.dump(time_stat, handler)
-
+            stats = {key: value / len(q_loader) for key, value in stats.items()}
         if self.compute_stats:
             with open(os.path.join(self.out_dir, "stats",
                                    "q_stats{}.json".format("_iter_{}".format(name) if name is not None else "")),
@@ -220,3 +216,184 @@ class SelfSparseRetrieval(Evaluator):
             if self.compute_stats:
                 out["stats"] = stats if self.doc_stats is None else {**stats, **self.doc_stats}
             return out
+
+
+class EncodeAnserini(Evaluator):
+    """Create anserini docs
+    """
+
+    def __init__(self, model, config, dataset_name=None, output_name=None, input_type="document"):
+        super().__init__(model, config, restore=True)
+        self.input_type = input_type
+        self.out_dir = os.path.join(config["out_dir"], dataset_name) if dataset_name is not None else config["out_dir"]
+        makedir(self.out_dir)
+        self.output_key = "d_rep" if self.input_type == "document" else "q_rep"
+        self.arg_key = "d_kwargs" if self.input_type == "document" else "q_kwargs"
+        self.output_name = output_name
+        if self.output_name is not None:
+            self.filename = output_name
+        else:
+            self.filename = "docs_anserini.jsonl" if self.input_type == "document" else "queries_anserini.tsv"
+
+    def index(self, collection_loader, quantization_factor=2):
+        vocab_dict = collection_loader.tokenizer.get_vocab()
+        vocab_dict = {v: k for k, v in vocab_dict.items()}
+        collection_file = open(os.path.join(self.out_dir, self.filename), "w")
+        t0 = time.time()
+        with torch.no_grad():
+            for t, batch in enumerate(tqdm(collection_loader)):
+                inputs = {k: v for k, v in batch.items() if k not in {"id", "text"}}
+                for k, v in inputs.items():
+                    inputs[k] = v.to(self.device)
+                batch_rep = self.model(**{self.arg_key: inputs})[self.output_key].cpu().numpy()
+                for rep, id_, text in zip(batch_rep, batch["id"], batch["text"]):
+                    id_ = id_.item()
+                    idx = np.nonzero(rep)
+                    # then extract values:
+                    data = rep[idx]
+                    data = np.rint(data * quantization_factor).astype(int)
+                    dict_splade = dict()
+                    for id_token, value_token in zip(idx[0], data):
+                        if value_token > 0:
+                            real_token = vocab_dict[id_token]
+                            dict_splade[real_token] = int(value_token)
+                    if len(dict_splade.keys()) == 0:
+                        print("empty input =>", id_)
+                        dict_splade[vocab_dict[998]] = 1
+                        # in case of empty doc we fill with "[unused993]" token (just to fill and avoid issues
+                        # with anserini), in practice happens just a few times ...
+                    if self.input_type == "document":
+                        dict_ = dict(id=id_, content=text, vector=dict_splade)
+                        json_dict = json.dumps(dict_)
+                        collection_file.write(json_dict + "\n")
+                    else:
+                        string_splade = " ".join(
+                            [" ".join([str(real_token)] * freq) for real_token, freq in dict_splade.items()])
+                        collection_file.write(str(id_) + "\t" + string_splade + "\n")
+
+
+class SparseApproxEvalWrapper(Evaluator):
+    """
+    wrapper for sparse indexer + retriever during training
+    """
+
+    def __init__(self, model, config, collection_loader, q_loader, **kwargs):
+        super().__init__(model, config, **kwargs)
+        self.collection_loader = collection_loader
+        self.q_loader = q_loader
+        self.model_output_dim = self.model.module.output_dim if hasattr(self.model, "module") else self.model.output_dim
+
+    def index_and_retrieve(self, i):
+        indexer = SparseIndexing(self.model, config=None, restore=False, compute_stats=True)
+        sparse_index_d = indexer.index(self.collection_loader)
+        retriever = SparseRetrieval(self.model, self.config, dim_voc=self.model_output_dim, index_d=sparse_index_d,
+                                    restore=False, compute_stats=True)
+        return retriever.retrieve(self.q_loader, top_k=self.config["top_k"], name=i, return_d=True)
+
+
+class RerankEvaluator(Evaluator):
+
+    def __init__(self, model, config, dataset_name=None, **kwargs):
+        super().__init__(model, config, **kwargs)
+        self.init_(config=config, dataset_name=dataset_name)
+
+    def init_(self, config, dataset_name):
+        self.out_dir = os.path.join(config["out_dir"], dataset_name) if dataset_name is not None else config["out_dir"]
+
+    def evaluate(self, data_loader, out_dir, reranker_type, model_name="unicamp-dl/mt5-13b-mmarco-100k"):
+        makedir(out_dir)
+        temp_d = defaultdict(dict)
+        logs = open(os.path.join(out_dir, "eval_logs.txt"), "w")
+        logs.write("begin evaluation on {} batches ...\n".format(len(data_loader)))
+        t0 = time.time()
+        with torch.no_grad():  # the model has already been put in eval mode at init
+            if reranker_type == "monoT5" or reranker_type == "duoT5":
+                if reranker_type == "duoT5":
+                    model = DuoT5(model=self.model)
+                else:
+                    model = MonoT5(model=self.model, use_amp=False, pretrained_model_name_or_path=model_name)
+                #                    model = MonoT5(model=self.model,use_amp=False,pretrained_model_name_or_path="unicamp-dl/mt5-13b-mmarco-100k")
+                #                    model = MonoT5(model=self.model,use_amp=False,pretrained_model_name_or_path="castorini/monot5-3b-msmarco-10k")
+
+                for query_id, all_list in tqdm(data_loader):
+                    query = all_list[0]
+                    texts = all_list[1:]
+                    reranked = model.rerank(query, texts)
+                    for doc in reranked:
+                        temp_d[str(query_id)][str(doc.metadata["docid"])] = doc.score
+            else:
+                for i, batch in enumerate(tqdm(data_loader)):
+                    for k, v in batch.items():
+                        if k not in ["q_id", "d_id"]:
+                            batch[k] = v.to(self.device)
+                    logits = self.model(
+                        **{k: v for k, v in batch.items() if k not in {"q_id", "d_id", "labels_attention"}})
+                    logits = logits[0][:, 0]
+
+                    for q_id, d_id, s in zip(batch["q_id"],
+                                             batch["d_id"],
+                                             to_list(logits),
+                                             ):
+                        temp_d[str(q_id)][str(d_id)] = s
+        with open(os.path.join(self.out_dir, "run.json"), "w") as handler:
+            json.dump(temp_d, handler)
+        logs.write("done\ntook about {} hours".format((time.time() - t0) / 3600))
+        return temp_d
+
+
+class PairwisePromptEvaluator(Evaluator):
+
+    def __init__(self, model, config, position_dict=None, dataset_name=None, **kwargs):
+        super().__init__(model, config, **kwargs)
+        self.init_(config=config, position_dict=position_dict, dataset_name=dataset_name)
+
+    def init_(self, config, dataset_name, position_dict):
+        self.out_dir = os.path.join(config["out_dir"], dataset_name) if dataset_name is not None else config["out_dir"]
+        self.position_dict = position_dict
+
+    @staticmethod
+    def compute_score(results, position_dict):
+        scores = defaultdict(dict)
+        for qid, did_dict in results.items():
+            for did, did_values in did_dict.items():
+                scores[qid][did] = 0
+                for did2, value in did_values.items():
+                    if value > results[qid][did2][did]:
+                        scores[qid][did] += 1
+                    elif value == results[qid][did2][did]:
+                        scores[qid][did] += 0.5
+                scores[qid][did] += 0.001 / position_dict[qid][did]  # for solving ties
+        return scores
+
+    def evaluate(self, data_loader, out_dir, reranker_type="PairwisePrompt"):
+        makedir(out_dir)
+        t0 = time.time()
+        with torch.no_grad():  # the model has already been put in eval mode at init
+            results = defaultdict(dict)
+            for i, batch in enumerate(tqdm(data_loader)):
+                for k, v in batch.items():
+                    if k not in ["q_id", "d_id_1", "d_id_2"]:
+                        batch[k] = v.to(self.device)
+                outputs = self.model.generate(batch["input_ids"], max_new_tokens=1, output_scores=True,
+                                              return_dict_in_generate=True).scores[0]
+                result = outputs[:, [71, 272]]  # 71 is A, 272 is B, hardcoded for FlanT5
+                all_scores = torch.nn.functional.softmax(result, dim=-1)
+
+                for qid, did1, did2, score in zip(batch["q_id"],
+                                                  batch["d_id_1"], batch["d_id_2"],
+                                                  to_list(all_scores)):
+                    if did1 not in results[qid]:
+                        results[qid][did1] = defaultdict(float)
+                    if did2 not in results[qid]:
+                        results[qid][did2] = defaultdict(float)
+
+                    if score[0] > score[1]:
+                        results[qid][did1][did2] = 1
+                    else:
+                        results[qid][did1][did2] = -1
+
+        temp_d = PairwisePromptEvaluator.compute_score(results, self.position_dict)
+        with open(os.path.join(self.out_dir, "run.json"), "w") as handler:
+            json.dump(temp_d, handler)
+        print("done\ntook about {} hours".format((time.time() - t0) / 3600))
+        return temp_d

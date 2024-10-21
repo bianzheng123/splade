@@ -1,12 +1,13 @@
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import os
 
 from conf.CONFIG_CHOICE import CONFIG_NAME, CONFIG_PATH
+from .datasets.dataloaders import CollectionDataLoader
 from .datasets.datasets import CollectionDatasetPreLoad
-from .self_evaluate import self_evaluate
+from .evaluate import evaluate
 from .models.models_utils import get_model
-from .tasks.self_transformer_evaluator import SelfSparseRetrieval, SelfTokenizer
+from .tasks.self_transformer_evaluator import SelfSparseRetrieval
 from .utils.utils import get_dataset_name, get_initialize_config
 
 
@@ -27,12 +28,15 @@ def retrieve_evaluate(exp_dict: DictConfig):
     for data_dir in set(exp_dict["data"]["Q_COLLECTION_PATH"]):
         # q_collection is the text of the query
         q_collection = CollectionDatasetPreLoad(data_dir=data_dir, id_style="row_id")
-        tokenizer = SelfTokenizer(tokenizer_type=model_training_config["tokenizer_type"],
-                      max_length=model_training_config["max_length"])
-        evaluator = SelfSparseRetrieval(config=config, model=model, tokenizer=tokenizer, dataset_name=get_dataset_name(data_dir),
+        # tokenize the collection, the q_loader is a dictionary
+        # input_ids is the tokenized text, attention_mask is the mask for the input_ids, id is the ID of the query
+        q_loader = CollectionDataLoader(dataset=q_collection, tokenizer_type=model_training_config["tokenizer_type"],
+                                        max_length=model_training_config["max_length"], batch_size=batch_size,
+                                        shuffle=False, num_workers=1)
+        evaluator = SelfSparseRetrieval(config=config, model=model, dataset_name=get_dataset_name(data_dir),
                                         compute_stats=True, dim_voc=model.output_dim)
-        evaluator.retrieve(q_collection, top_k=exp_dict["config"]["top_k"], threshold=exp_dict["config"]["threshold"])
-    self_evaluate(exp_dict)
+        evaluator.retrieve(q_loader, top_k=exp_dict["config"]["top_k"], threshold=exp_dict["config"]["threshold"])
+    evaluate(exp_dict)
 
 
 if __name__ == "__main__":
