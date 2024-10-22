@@ -46,6 +46,7 @@ class SelfSparseIndexing(Evaluator):
                 row, col = torch.nonzero(batch_documents, as_tuple=True)
                 data = batch_documents[row, col]
                 row = row + count
+                print(f"row {row}, col {col}, data {data}")
                 batch_ids = to_list(batch["id"])
                 if id_dict:
                     batch_ids = [id_dict[x] for x in batch_ids]

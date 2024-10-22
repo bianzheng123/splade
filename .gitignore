@@ -10,3 +10,7 @@ output/
 /data
 !/data/lotte-500-gnd
 !/data/toy_data
+/build/
+/cmake-build-debug/
+/SOSIA/output/
+/SOSIA/sos
