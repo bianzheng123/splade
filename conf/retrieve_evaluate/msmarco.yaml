@@ -5,7 +5,8 @@ data:
   EVAL_QREL_PATH: [data/msmarco/qrel/qrel.json]
 
 config:
+  dataset_name: msmacro
   top_k: 10
   threshold: 0
-  eval_metric: [[mrr_10, recall]]
+  eval_metric: [[mrr_10, recall, ndcg]]
   retrieval_name: [MSMARCO]

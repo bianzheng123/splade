@@ -46,7 +46,7 @@ class SelfSparseIndexing(Evaluator):
                 row, col = torch.nonzero(batch_documents, as_tuple=True)
                 data = batch_documents[row, col]
                 row = row + count
-                print(f"row {row}, col {col}, data {data}")
+                # print(f"row {row}, col {col}, data {data}")
                 batch_ids = to_list(batch["id"])
                 if id_dict:
                     batch_ids = [id_dict[x] for x in batch_ids]
@@ -142,7 +142,7 @@ class SelfSparseRetrieval(Evaluator):
         if self.compute_stats:
             self.l0 = L0()
 
-    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0):
+    def retrieve(self, q_loader, n_query, top_k, dataset, name=None, return_d=False, id_dict=False, threshold=0):
         makedir(self.out_dir)
         if self.compute_stats:
             makedir(os.path.join(self.out_dir, "stats"))
@@ -150,8 +150,14 @@ class SelfSparseRetrieval(Evaluator):
         if self.compute_stats:
             stats = defaultdict(float)
 
+        single_retrieval_time_l = []
+        encode_time_l = []
+        search_time_l = []
         with torch.no_grad():
+            start_total_retrieval_time = time.time()
             for t, batch in enumerate(tqdm(q_loader)):
+                start_single_retrieval_time = time.time()
+                start_encode_time = time.time()
                 # print("batch", batch)
                 # get the query id, only one query per batch
                 q_id = to_list(batch["id"])[0]
@@ -161,13 +167,16 @@ class SelfSparseRetrieval(Evaluator):
                 for k, v in inputs.items():
                     inputs[k] = v.to(self.device)
                 query = self.model(q_kwargs=inputs)["q_rep"]  # we assume ONE query per batch here
+                encode_time = time.time() - start_encode_time
+
+                start_search_time = time.time()
                 if self.compute_stats:
                     stats["L0_q"] += self.l0(query).item()
                 # TODO: batched version for retrieval
                 # row, col means the position of the non-zero values in the query
                 # since there is only one query, so row is useless
                 row, col = torch.nonzero(query, as_tuple=True)
-                print("-------------------row, col", row, col)
+                # print("-------------------row, col", row, col)
                 # get the value of each non-zero position
                 values = query[to_list(row), to_list(col)]
                 # if t == len(q_loader) - 1:
@@ -195,8 +204,37 @@ class SelfSparseRetrieval(Evaluator):
                                                                   size_collection=self.sparse_index.nb_docs())
                 # threshold set to 0 by default, could be better
                 filtered_indexes, scores = self.select_topk(filtered_indexes, scores, k=top_k)
+                search_time = time.time() - start_search_time
+
+                single_retrieval_time = time.time() - start_single_retrieval_time
+                single_retrieval_time_l.append(single_retrieval_time)
+                encode_time_l.append(encode_time)
+                search_time_l.append(search_time)
+
                 for id_, sc in zip(filtered_indexes, scores):
                     res[str(q_id)][str(self.doc_ids[id_])] = float(sc)
+            total_retrieval_time = time.time() - start_total_retrieval_time
+
+        with open(os.path.join(self.out_dir, f"{dataset}-splade-top{top_k}--.json"),"w") as handler:
+            time_json = {"n_query": n_query, 'topk': top_k,
+                         "search_time": {
+                             "total_query_time_ms": '{:.3f}'.format(total_retrieval_time * 1e3),
+                             "retrieval_time_p5(ms)": '{:.3f}'.format(np.percentile(single_retrieval_time_l, 5) * 1e3),
+                             "retrieval_time_p50(ms)": '{:.3f}'.format(np.percentile(single_retrieval_time_l, 50) * 1e3),
+                             "retrieval_time_p95(ms)": '{:.3f}'.format(np.percentile(single_retrieval_time_l, 95) * 1e3),
+                             "retrieval_time_average(ms)": '{:.3f}'.format(1.0 * total_retrieval_time / n_query * 1e3),
+                             "encode_time_p5(ms)": '{:.3f}'.format(np.percentile(encode_time_l, 5) * 1e3),
+                             "encode_time_p50(ms)": '{:.3f}'.format(np.percentile(encode_time_l, 50) * 1e3),
+                             "encode_time_p95(ms)": '{:.3f}'.format(np.percentile(encode_time_l, 95) * 1e3),
+                             "encode_time_average(ms)": '{:.3f}'.format(np.average(encode_time_l) * 1e3),
+                             "search_time_p5(ms)": '{:.3f}'.format(np.percentile(search_time_l, 5) * 1e3),
+                             "search_time_p50(ms)": '{:.3f}'.format(np.percentile(search_time_l, 50) * 1e3),
+                             "search_time_p95(ms)": '{:.3f}'.format(np.percentile(search_time_l, 95) * 1e3),
+                             "search_time_average(ms)": '{:.3f}'.format(np.average(search_time_l) * 1e3),
+                         }
+                         }
+            json.dump(time_json, handler)
+
         if self.compute_stats:
             stats = {key: value / len(q_loader) for key, value in stats.items()}
         if self.compute_stats:

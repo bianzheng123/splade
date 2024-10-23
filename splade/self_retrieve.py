@@ -5,7 +5,7 @@ import os
 from conf.CONFIG_CHOICE import CONFIG_NAME, CONFIG_PATH
 from .datasets.dataloaders import CollectionDataLoader
 from .datasets.datasets import CollectionDatasetPreLoad
-from .evaluate import evaluate
+from .self_evaluate import self_evaluate
 from .models.models_utils import get_model
 from .tasks.self_transformer_evaluator import SelfSparseRetrieval
 from .utils.utils import get_dataset_name, get_initialize_config
@@ -35,8 +35,10 @@ def retrieve_evaluate(exp_dict: DictConfig):
                                         shuffle=False, num_workers=1)
         evaluator = SelfSparseRetrieval(config=config, model=model, dataset_name=get_dataset_name(data_dir),
                                         compute_stats=True, dim_voc=model.output_dim)
-        evaluator.retrieve(q_loader, top_k=exp_dict["config"]["top_k"], threshold=exp_dict["config"]["threshold"])
-    evaluate(exp_dict)
+        evaluator.retrieve(q_loader, n_query=len(q_collection), top_k=exp_dict["config"]["top_k"],
+                           dataset=exp_dict["config"]["dataset_name"],
+                           threshold=exp_dict["config"]["threshold"])
+    self_evaluate(exp_dict)
 
 
 if __name__ == "__main__":
