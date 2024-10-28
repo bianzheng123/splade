@@ -42,7 +42,17 @@ def self_evaluate(exp_dict: DictConfig):
             performance_fname = os.path.join(out_dir, dataset_name, f"{real_dataset}-splade-top{topk}--.json")
             with open(performance_fname, 'r') as f:
                 time_json = json.load(f)
-                time_json['search_accuracy'] = res
+                time_json['search_accuracy'] = {
+                    "mrr_mean": '{:.3f}'.format(res['mrr_10']),
+                    "e2e_recall_mean": '{:.3f}'.format(res['recall_10']),
+                    "ndcg_mean": '{:.3f}'.format(res['ndcg'])
+                }
+            with open(performance_fname, 'w') as f:
+                json.dump(time_json, f)
+
+            username = exp_dict["config"]["username"]
+            performance_path = f'/home/{username}/Dataset/vector-set-similarity-search/end2end/Result/performance'
+            performance_fname = os.path.join(performance_path, f"{real_dataset}-splade-top{topk}--.json")
             with open(performance_fname, 'w') as f:
                 json.dump(time_json, f)
 

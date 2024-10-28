@@ -6,6 +6,7 @@ data:
 
 config:
   dataset_name: msmacro
+  username: bianzheng
   top_k: 10
   threshold: 0
   eval_metric: [[mrr_10, recall, ndcg]]

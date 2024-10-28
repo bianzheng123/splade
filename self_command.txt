@@ -53,6 +53,7 @@ proxychains python3 -m splade.self_retrieve \
   retrieve_evaluate=lotte-500-gnd \
   config.index_dir=experiments/pre-trained/lotte-500-gnd/index \
   config.out_dir=experiments/pre-trained/lotte-500-gnd/out \
+  config.username=bianzheng \
   config.top_k=10
 
 

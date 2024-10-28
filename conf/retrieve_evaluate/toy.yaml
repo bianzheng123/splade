@@ -6,6 +6,7 @@ data:
 
 config:
   top_k: 5
+  username: bianzheng
   threshold: 0.4
   eval_metric: [[mrr_10, recall]]
   retrieval_name: [TOY]

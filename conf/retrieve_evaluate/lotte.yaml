@@ -1,11 +1,11 @@
 # @package _global_
 
 data:
-  Q_COLLECTION_PATH: [data/lotte-500-gnd/dev_queries]
-  EVAL_QREL_PATH: [data/lotte-500-gnd/qrel/qrel.json]
+  Q_COLLECTION_PATH: [data/lotte/dev_queries]
+  EVAL_QREL_PATH: [data/lotte/qrel/qrel.json]
 
 config:
-  dataset_name: lotte-500-gnd
+  dataset_name: lotte
   username: bianzheng
   top_k: 10
   threshold: 0
