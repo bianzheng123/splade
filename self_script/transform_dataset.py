@@ -56,6 +56,6 @@ def run(username: str, dataset: str):
 
 
 if __name__ == '__main__':
-    username = 'bianzheng'
+    username = 'zhengbian'
     dataset = 'lotte-500-gnd'
     run(username=username, dataset=dataset)

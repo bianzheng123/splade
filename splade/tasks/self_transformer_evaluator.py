@@ -20,7 +20,7 @@ class SelfSparseIndexing(Evaluator):
     """
 
     def __init__(self, model, config, compute_stats=False, dim_voc=None, is_query=False, force_new=True, **kwargs):
-        super().__init__(model, config, **kwargs)
+        super().__init__(model, config=config, device='cuda:0', **kwargs)
         self.index_dir = config["index_dir"] if config is not None else None
         self.sparse_index = IndexDictOfArray(self.index_dir, dim_voc=dim_voc, force_new=force_new)
         self.compute_stats = compute_stats
@@ -114,7 +114,7 @@ class SelfSparseRetrieval(Evaluator):
 
     def __init__(self, model, config, dim_voc, dataset_name=None, index_d=None, compute_stats=False, is_beir=False,
                  **kwargs):
-        super().__init__(model, config, **kwargs)
+        super().__init__(model, config=config, device='cpu', **kwargs)
         assert ("index_dir" in config and index_d is None) or (
                 "index_dir" not in config and index_d is not None)
         if "index_dir" in config:
