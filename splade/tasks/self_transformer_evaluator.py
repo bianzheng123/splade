@@ -20,7 +20,7 @@ class SelfSparseIndexing(Evaluator):
     """
 
     def __init__(self, model, config, compute_stats=False, dim_voc=None, is_query=False, force_new=True, **kwargs):
-        super().__init__(model, config=config, device='cuda:0', **kwargs)
+        super().__init__(model, config=config, device='cuda', **kwargs)
         self.index_dir = config["index_dir"] if config is not None else None
         self.sparse_index = IndexDictOfArray(self.index_dir, dim_voc=dim_voc, force_new=force_new)
         self.compute_stats = compute_stats
@@ -215,7 +215,7 @@ class SelfSparseRetrieval(Evaluator):
                     res[str(q_id)][str(self.doc_ids[id_])] = float(sc)
             total_retrieval_time = time.time() - start_total_retrieval_time
 
-        with open(os.path.join(self.out_dir, f"{dataset}-splade-top{top_k}--.json"),"w") as handler:
+        with open(os.path.join(self.out_dir, f"{dataset}-retrieval-splade-top{top_k}--.json"),"w") as handler:
             time_json = {"n_query": n_query, 'topk': top_k,
                          "search_time": {
                              "total_query_time_ms": '{:.3f}'.format(total_retrieval_time * 1e3),

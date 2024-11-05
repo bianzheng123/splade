@@ -39,7 +39,7 @@ def self_evaluate(exp_dict: DictConfig):
 
             topk = exp_dict["config"]["top_k"]
             real_dataset = exp_dict["config"]["dataset_name"]
-            performance_fname = os.path.join(out_dir, dataset_name, f"{real_dataset}-splade-top{topk}--.json")
+            performance_fname = os.path.join(out_dir, dataset_name, f"{real_dataset}-retrieval-splade-top{topk}--.json")
             with open(performance_fname, 'r') as f:
                 time_json = json.load(f)
                 time_json['search_accuracy'] = {
@@ -52,7 +52,7 @@ def self_evaluate(exp_dict: DictConfig):
 
             username = exp_dict["config"]["username"]
             performance_path = f'/home/{username}/Dataset/vector-set-similarity-search/end2end/Result/performance'
-            performance_fname = os.path.join(performance_path, f"{real_dataset}-splade-top{topk}--.json")
+            performance_fname = os.path.join(performance_path, f"{real_dataset}-retrieval-splade-top{topk}--.json")
             with open(performance_fname, 'w') as f:
                 json.dump(time_json, f)
 
